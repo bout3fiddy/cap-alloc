@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "lido-cap-alloc"
+version = "0.1.0"
+description = "Lido Performance Based Capital Allocation Framework Design"
+authors = ["Fiddy"]
+readme = "README.md"
+package-mode = false
+
+
+[tool.poetry.dependencies]
+python = "^3.11"
+matplotlib = "^3.8.0"
+pandas = "^2.2.3"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.1.1"
+mypy = "^1.8.0"
+pylint = "^3.0.3"
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[tool.pylint]
+max-line-length = 100
+disable = ["C0111", "R0903"]
+good-names = ["i", "j", "k", "ex", "Run", "_"]
