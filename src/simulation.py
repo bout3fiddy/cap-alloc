@@ -68,14 +68,21 @@ class AllocationSimulator:
                 manager, len(epoch_data), self.strategy_liq_buffer,
             )
             
-            # we simulate a promised yield somewhat very close to the average net apy
+            # Simulate promised yield based on manager's risk profile
+            # Higher risk managers will deviate more from actual returns, but within reasonable bounds
+            # Base deviation scales with risk level - riskier managers are more likely to over/under promise
             average_net_apy_realdata = epoch_data['net_apy'].mean()
-            manager.promised_yield = average_net_apy_realdata * np.random.normal(1.0, 0.05 * manager.strategy_risk)
+            base_deviation = 0.03 + (0.07 * manager.strategy_risk)  # Maps 0.1->0.037, 0.9->0.093
+            manager.promised_yield = average_net_apy_realdata * np.random.normal(1.0, base_deviation)
             
             # simulate supply apy referencing manager's risk
-            # the risk component here is hypothetical to simulate returns
-            # in lieu of data from multiple sources
-            manager.realized_yield = average_net_apy_realdata * np.random.normal(1.0, 0.05 * manager.strategy_risk)
+            # the risk component here is hypothetical to simulate returns in lieu of data from multiple sources
+            
+            # Adjust realized yield based on risk level - higher risk means slightly higher returns
+            # For risk=0.1 (low), multiplier will be ~0.8 giving ~7% on 9% avg
+            # For risk=0.9 (high), multiplier will be ~1.2 giving ~11% on 9% avg
+            risk_multiplier = 0.8 + (0.4 * manager.strategy_risk)  # Maps 0.1->0.84, 0.9->1.16
+            manager.realized_yield = average_net_apy_realdata * risk_multiplier
             
             # Calculate absolute returns for this manager in this epoch
             manager.absolute_returns = manager.allocated_capital * manager.realized_yield * (self.epoch_length_hours / (24 * 365))
@@ -162,16 +169,6 @@ class AllocationSimulator:
             results.append(epoch_result)
             
         return pd.DataFrame(results).set_index('timestamp')
-    
-    def _calculate_loss_buffers(self) -> float:
-        """Calculate average loss buffers across all managers."""
-        
-        # Placeholder implementation - in real usage this would track
-        # minimum liquidation buffers from on-chain data
-        buffers = [m.strategy_risk * np.random.uniform(0.03, 0.1) 
-                  for m in self.managers.values()]
-        
-        return np.mean(buffers)
 
     def _check_yield_slashing(self, manager: CapitalManager, bid_floor: float) -> bool:
         """Determine if a manager should be slashed."""
@@ -206,14 +203,19 @@ class AllocationSimulator:
         ) -> List[float]:
         
         # Base health based on strategy risk (riskier strategies run tighter buffers)
-        base_health = 1.15 + (0.5 * (1 - manager.strategy_risk))  # Range 1.15-1.65
+        # Scale buffer based on risk - high risk = closer to min buffer, low risk = more buffer
+        # Clamp additional buffer between 0.01 and 0.05 to keep total between 1.07-1.11
+        additional_buffer = 0.05 * (1 - manager.strategy_risk)  # 0.05 when risk=0, 0 when risk=1
+        base_health = 1 + strategy_liq_buffer + min(0.05, max(0.01, additional_buffer))
         
         # Simulate health factors with random walk
         health_factors = []
         current_health = base_health
         for _ in range(periods):
+            
             # Add noise based on strategy risk
-            movement = np.random.normal(0, 0.02 * manager.strategy_risk)
+            # Tiny perturbations scaled by strategy risk, using much smaller std dev
+            movement = np.random.normal(0, 0.001 * manager.strategy_risk) 
             current_health += movement
             
             # Maintain minimum health of 1 + strategy_liq_buffer + 0.1 to prevent immediate liquidation

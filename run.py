@@ -80,7 +80,7 @@ def main():
         initial_managers=managers,
         dao_params=dao_params,
         initial_capital=10_000_000,
-        strategy_liq_buffer=0.11,
+        strategy_liq_buffer=0.06,
     )
     
     print("Starting simulation...")
