@@ -89,37 +89,42 @@ class AllocationSimulator:
             capital_at_end += manager.allocated_capital + manager.absolute_returns
             
             # Calculate loss buffer as minimum distance from liquidation
-            min_buffer = (min(health_factors) - (1 + self.strategy_liq_buffer))
+            min_buffer = min(health_factors) - 1 + self.strategy_liq_buffer
             manager.loss_buffer = min_buffer
             
             # Check for penalising condition: manager must at least make
             # minimums above bid floor else they get penalised
             manager.to_penalise = self._check_yield_slashing(manager, bid_floor)
 
-            # calculate score and cache
-            manager.score = scoring.calculate_score(manager, self.dao_params)
-            current_time = epoch_data.index[-1]
+            # Calculate raw score
+            raw_score, str_score = scoring.calculate_score(manager, self.dao_params)
+            manager.score = raw_score
+            manager.str_score = str_score
+            
+        # Second pass: normalize scores and update reputations
+        scoring.normalize_scores(list(self.managers.values()))
+        
+        # Third pass: update reputations with normalized scores
+        current_time = epoch_data.index[-1]
+        for manager in self.managers.values():
             manager.score_history.add(current_time, manager.score)
             
-            # Get time delta for reputation update
+            # Update reputation using normalized score
             time_delta = manager.score_history.get_last_time_delta()
-            if time_delta == 0:  # First score
+            if time_delta == 0:
                 time_delta = self.epoch_length_hours
             
-            # Update reputation ema
-            ema_score = scoring.calculate_ema_reputation(
+            manager.reputation = scoring.calculate_ema_reputation(
                 manager=manager,
                 time_delta=time_delta,
                 averaging_window=self.dao_params.ema_window_reputation
             )
-            manager.reputation = ema_score
-            
+        
         # cache previous capital
         self.previous_capital = self.capital
         self.capital = capital_at_end
         
-        # Allocate capital for next epoch: need reputation scores first so this needs
-        # a separate loop
+        # Finally allocate capital using normalized scores
         allocations = scoring.allocate_capital(list(self.managers.values()), self.capital)
         for manager_id, alloc in allocations.items():
             
@@ -133,9 +138,10 @@ class AllocationSimulator:
             print(f"manager promised {mngr.promised_yield} and realised {mngr.realized_yield}")
             print(f"manager's absolute profits in epoch: {mngr.absolute_returns}")
             print(f"manager scored {mngr.score} and was allocated {mngr.allocated_capital}")
-            print(f"reputation score: {mngr.reputation}")
+            print(manager.str_score)
+            print(f"new reputation score: {mngr.reputation}")
         
-        # Record history
+        # Record epoch
         epoch_record = {
             'epoch_id': epoch_id,
             'timestamp': epoch_data.index[0],
@@ -144,6 +150,7 @@ class AllocationSimulator:
             'bid_floor': bid_floor,
             'allocations': allocations.copy(),
             'scores': {m_id: m.score for m_id, m in self.managers.items()},
+            'promised_yields': {m_id: m.promised_yield for m_id, m in self.managers.items()},
             'realized_yields': {m_id: m.realized_yield for m_id, m in self.managers.items()},
             'bond_amount': {m_id: m.bond_amount for m_id, m in self.managers.items()},
             'absolute_returns': {m_id: m.absolute_returns for m_id, m in self.managers.items()},
@@ -206,7 +213,7 @@ class AllocationSimulator:
         # Scale buffer based on risk - high risk = closer to min buffer, low risk = more buffer
         # Clamp additional buffer between 0.01 and 0.05 to keep total between 1.07-1.11
         additional_buffer = 0.05 * (1 - manager.strategy_risk)  # 0.05 when risk=0, 0 when risk=1
-        base_health = 1 + strategy_liq_buffer + min(0.05, max(0.01, additional_buffer))
+        base_health = 1 + strategy_liq_buffer + additional_buffer
         
         # Simulate health factors with random walk
         health_factors = []
@@ -215,10 +222,12 @@ class AllocationSimulator:
             
             # Add noise based on strategy risk
             # Tiny perturbations scaled by strategy risk, using much smaller std dev
-            movement = np.random.normal(0, 0.001 * manager.strategy_risk) 
-            current_health += movement
+            movement = np.random.normal(0, 0.00001 * manager.strategy_risk) 
+            if current_health + movement > 1 + strategy_liq_buffer:
+                current_health += movement
+            else:
+                current_health = 1+strategy_liq_buffer +0.001
             
-            # Maintain minimum health of 1 + strategy_liq_buffer + 0.1 to prevent immediate liquidation
-            health_factors.append(max(current_health, 1 + strategy_liq_buffer + 0.1))
+            health_factors.append(current_health)
         
         return health_factors

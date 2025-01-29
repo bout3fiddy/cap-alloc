@@ -37,6 +37,7 @@ class CapitalManager:
     allocated_capital: float
     absolute_returns: float
     score: float
+    str_score: str
     reputation: float
     score_history: ScoreHistory
     bond_amount: float

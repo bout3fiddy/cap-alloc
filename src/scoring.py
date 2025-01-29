@@ -38,7 +38,8 @@ def calculate_bid_floor(
     return max(risk_free_rate + dao_premium, median_prev_realized_yield)
 
 
-def calculate_score(manager: CapitalManager, dao_params: DaoParams) -> float:
+def calculate_score(manager: CapitalManager, dao_params: DaoParams) -> tuple[float, str]:
+    """Calculate raw score before normalization."""
     
     # Penalty factor from previous slashing
     penalty_factor = dao_params.penalty if manager.to_penalise else 1
@@ -50,27 +51,36 @@ def calculate_score(manager: CapitalManager, dao_params: DaoParams) -> float:
     yield_component = dao_params.alpha * manager.realized_yield
     risk_component = manager.loss_buffer
     predictability_component = dao_params.beta * delta
-    reputation_component = manager.reputation
     
-    # calculate raw score: this is the main bread and butter of the mechanism
-    raw_score = (yield_component * risk_component * reputation_component * (1+predictability_component)) / (penalty_factor)
+    str_score = f'''
+    score calculation components:
+    yield: {yield_component}
+    risk: {risk_component}
+    predictability: {predictability_component}
+    reputation: {manager.reputation}
+    '''    
+    
+    # Calculate raw score without reputation (will be applied after normalization)
+    raw_score = (yield_component * risk_component * (1 + predictability_component)) / penalty_factor
+    
+    return raw_score, str_score
 
-    return raw_score
+
+def normalize_scores(managers: List[CapitalManager]) -> None:
+    """L1 normalize scores across all managers."""
+    scores = np.array([m.score for m in managers])
+    total = np.sum(np.abs(scores))
+    if total > 0:  # Avoid division by zero
+        normalized = scores / total
+        # Update managers with normalized scores
+        for manager, norm_score in zip(managers, normalized):
+            manager.score = norm_score
 
 
 def allocate_capital(managers: List[CapitalManager], total_capital: float) -> Dict[str, float]:
-    """
-    Allocate capital based on normalized performance scores.
-    
-    @param managers: List of capital managers
-    @param total_capital: Total capital to allocate
-    @return: Dictionary of allocations by manager ID
-    """
-    scores = np.array([m.score for m in managers])
-
-    normalized = scores / scores.sum()
-    allocations = {m.manager_id: alloc * total_capital for m, alloc in zip(managers, normalized)}
-    
+    """Allocate capital based on normalized scores."""
+    # Scores are already normalized, just multiply by total capital
+    allocations = {m.manager_id: m.score * total_capital for m in managers}
     return allocations
 
 

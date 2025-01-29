@@ -66,6 +66,7 @@ def main():
             allocated_capital=0,
             absolute_returns=0,
             score=0,
+            str_score='',
             reputation=1,
             score_history=None,  # Will be initialized to empty ScoreHistory
             to_penalise=False,
